@@ -138,38 +138,70 @@ async function createDashboard(token, csrfToken) {
 
 // 🔥 Attach chart
 async function addChartToDashboard(dashboardId, chartId, token, csrfToken) {
+
     const position_json = {
-        ROOT_ID: { id: "ROOT_ID", type: "ROOT", children: ["GRID_ID"] },
-        GRID_ID: { id: "GRID_ID", type: "GRID", children: ["ROW_ID"] },
-        ROW_ID: { id: "ROW_ID", type: "ROW", children: ["COLUMN_ID"] },
+        ROOT_ID: {
+            id: "ROOT_ID",
+            type: "ROOT",
+            children: ["GRID_ID"]
+        },
+
+        GRID_ID: {
+            id: "GRID_ID",
+            type: "GRID",
+            children: ["ROW_ID"]
+        },
+
+        ROW_ID: {
+            id: "ROW_ID",
+            type: "ROW",
+            children: ["COLUMN_ID"]
+        },
+
         COLUMN_ID: {
             id: "COLUMN_ID",
             type: "COLUMN",
             children: [`CHART-${chartId}`],
             meta: {
                 width: 12,
-                background: "transparent"
+                background: "transparent"   // 🔥 IMPORTANT
             }
         },
+
         [`CHART-${chartId}`]: {
             id: `CHART-${chartId}`,
             type: "CHART",
             children: [],
             meta: {
-                chartId,
+                chartId: chartId,
                 sliceName: "AI Chart",
                 width: 12,
                 height: 50,
-                background: "transparent"
+                background: "transparent"   // 🔥 IMPORTANT
             }
         }
     };
 
+    const dashboard_payload = {
+        position_json: JSON.stringify(position_json),
+
+        // 🔥 THIS IS THE MISSING PIECE
+        json_metadata: JSON.stringify({
+            chart_configuration: {
+                [chartId]: {
+                    id: chartId,
+                    crossFilters: {
+                        scope: "global",
+                        chartsInScope: []
+                    }
+                }
+            }
+        })
+    };
+
     await client.put(
         `${SUPERSET_URL}/api/v1/dashboard/${dashboardId}`,
-        {
-            position_json: JSON.stringify(position_json)
-        },
+        dashboard_payload,
         {
             headers: {
                 Authorization: `Bearer ${token}`,
