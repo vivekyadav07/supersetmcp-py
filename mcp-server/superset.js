@@ -81,20 +81,26 @@ async function createChart(token, csrfToken, config = {}) {
                 label: "total"
             },
             row_limit: limit,
+            sort_by_metric: true,
             color_scheme: "supersetColors"
         };
     } else {
+        // Map bar/line to standard ECharts timeseries charts which superset supports
+        const viz_type = chartType === "line" ? "echarts_timeseries_line" : "echarts_timeseries_bar";
+        
         form_data = {
             datasource: `${DATASET_ID}__table`,
-            viz_type: chartType,
-            groupby,
+            viz_type: viz_type,
+            x_axis: groupby[0],
+            groupby: [],
             metrics: [{
                 expressionType: "SQL",
                 sqlExpression: "SUM(num)",
                 label: "total"
             }],
-            x_axis: groupby[0],
             row_limit: limit,
+            series_limit: limit,
+            order_desc: true,
             color_scheme: "supersetColors"
         };
     }
@@ -103,7 +109,7 @@ async function createChart(token, csrfToken, config = {}) {
         `${SUPERSET_URL}/api/v1/chart/`,
         {
             slice_name: `AI ${chartType} Chart`,
-            viz_type: chartType,
+            viz_type: form_data.viz_type,
             datasource_id: DATASET_ID,
             datasource_type: "table",
             params: JSON.stringify(form_data)
@@ -124,7 +130,8 @@ async function createDashboard(token, csrfToken) {
     const res = await client.post(
         `${SUPERSET_URL}/api/v1/dashboard/`,
         {
-            dashboard_title: "AI Generated Dashboard"
+            dashboard_title: "AI Generated Dashboard",
+            published: true
         },
         {
             headers: {
@@ -138,36 +145,23 @@ async function createDashboard(token, csrfToken) {
 
 // 🔥 Attach chart
 async function addChartToDashboard(dashboardId, chartId, token, csrfToken) {
-
+    // Simplified robust grid layout layout ensuring compatibility
     const position_json = {
         ROOT_ID: {
             id: "ROOT_ID",
             type: "ROOT",
             children: ["GRID_ID"]
         },
-
         GRID_ID: {
             id: "GRID_ID",
             type: "GRID",
             children: ["ROW_ID"]
         },
-
         ROW_ID: {
             id: "ROW_ID",
             type: "ROW",
-            children: ["COLUMN_ID"]
+            children: [`CHART-${chartId}`]
         },
-
-        COLUMN_ID: {
-            id: "COLUMN_ID",
-            type: "COLUMN",
-            children: [`CHART-${chartId}`],
-            meta: {
-                width: 12,
-                background: "transparent"   // 🔥 IMPORTANT
-            }
-        },
-
         [`CHART-${chartId}`]: {
             id: `CHART-${chartId}`,
             type: "CHART",
@@ -177,15 +171,14 @@ async function addChartToDashboard(dashboardId, chartId, token, csrfToken) {
                 sliceName: "AI Chart",
                 width: 12,
                 height: 50,
-                background: "transparent"   // 🔥 IMPORTANT
+                background: "transparent"
             }
         }
     };
 
     const dashboard_payload = {
         position_json: JSON.stringify(position_json),
-
-        // 🔥 THIS IS THE MISSING PIECE
+        published: true,
         json_metadata: JSON.stringify({
             chart_configuration: {
                 [chartId]: {

@@ -114,10 +114,18 @@ export default {
       const { data: raw, chartType } = this.chartData;
 
       // ✅ FIX 1: extract actual array safely
-      const data = raw?.data || [];
+      let data = raw?.data || [];
 
       if (!Array.isArray(data) || data.length === 0) {
         return {};
+      }
+
+      // Check for limit in sql string (e.g., from original user request via chartData.sql if available)
+      const sqlQuery = this.chartData.sql || "";
+      const limitMatch = sqlQuery.match(/LIMIT\s+(\d+)/i);
+      if (limitMatch) {
+          const limit = parseInt(limitMatch[1], 10);
+          data = data.slice(0, limit);
       }
 
       let options = {
