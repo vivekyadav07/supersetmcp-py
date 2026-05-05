@@ -145,7 +145,7 @@ async function createDashboard(token, csrfToken) {
 
 // 🔥 Attach chart
 async function addChartToDashboard(dashboardId, chartId, token, csrfToken) {
-    // Simplified robust grid layout layout ensuring compatibility
+    // Standard robust grid layout with necessary Superset meta properties
     const position_json = {
         ROOT_ID: {
             id: "ROOT_ID",
@@ -155,12 +155,28 @@ async function addChartToDashboard(dashboardId, chartId, token, csrfToken) {
         GRID_ID: {
             id: "GRID_ID",
             type: "GRID",
-            children: ["ROW_ID"]
+            children: ["ROW_ID"],
+            meta: {
+                width: 12
+            }
         },
         ROW_ID: {
             id: "ROW_ID",
             type: "ROW",
-            children: [`CHART-${chartId}`]
+            children: ["COLUMN_ID"],
+            meta: {
+                width: 12,
+                background: "BACKGROUND_TRANSPARENT"
+            }
+        },
+        COLUMN_ID: {
+            id: "COLUMN_ID",
+            type: "COLUMN",
+            children: [`CHART-${chartId}`],
+            meta: {
+                width: 12,
+                background: "BACKGROUND_TRANSPARENT"
+            }
         },
         [`CHART-${chartId}`]: {
             id: `CHART-${chartId}`,
@@ -171,9 +187,10 @@ async function addChartToDashboard(dashboardId, chartId, token, csrfToken) {
                 sliceName: "AI Chart",
                 width: 12,
                 height: 50,
-                background: "transparent"
+                background: "BACKGROUND_TRANSPARENT"
             }
-        }
+        },
+        DASHBOARD_VERSION_KEY: "v2"
     };
 
     const dashboard_payload = {
