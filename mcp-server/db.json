@@ -1,0 +1,104 @@
+{
+  "tenants": [
+    {
+      "id": "t1",
+      "name": "Acme Corp",
+      "code": "ACME",
+      "status": "active",
+      "createdAt": "2025-01-10T00:00:00Z"
+    },
+    {
+      "id": "t2",
+      "name": "Globex",
+      "code": "GLOBEX",
+      "status": "active",
+      "createdAt": "2025-02-01T00:00:00Z"
+    }
+  ],
+  "users": [
+    {
+      "id": "u1",
+      "email": "sys@example.com",
+      "name": "System Admin",
+      "role": "system_admin",
+      "tenantIds": ["t1", "t2"],
+      "status": "active",
+      "askedAsOptions": ["manager", "executive", "employee"]
+    },
+    {
+      "id": "u2",
+      "email": "admin@acme.com",
+      "name": "Jane Tenant Admin",
+      "role": "tenant_admin",
+      "tenantIds": ["t1"],
+      "status": "active"
+    },
+    {
+      "id": "u3",
+      "email": "ops@acme.com",
+      "name": "Bob Operator",
+      "role": "user",
+      "tenantIds": ["t1"],
+      "status": "active"
+    },
+    {
+      "id": "u4",
+      "email": "pending@globex.com",
+      "name": "Invited User",
+      "role": "user",
+      "tenantIds": ["t2"],
+      "status": "invited",
+      "inviteToken": "inv_abc123"
+    }
+  ],
+  "sla_categories": [
+    { "id": "cat1", "tenantId": "t1", "name": "Availability" },
+    { "id": "cat2", "tenantId": "t1", "name": "Response Time" }
+  ],
+  "sla_targets": [
+    {
+      "id": "st1",
+      "tenantId": "t1",
+      "categoryId": "cat1",
+      "name": "99.9% uptime",
+      "objective": 99.9,
+      "unit": "percent",
+      "period": "monthly",
+      "active": true
+    },
+    {
+      "id": "st2",
+      "tenantId": "t1",
+      "categoryId": "cat2",
+      "name": "P95 < 200ms",
+      "objective": 200,
+      "unit": "ms",
+      "period": "weekly",
+      "active": true
+    }
+  ],
+  "sla_performance": [
+    {
+      "id": "sp1",
+      "tenantId": "t1",
+      "targetId": "st1",
+      "periodStart": "2025-04-01",
+      "periodEnd": "2025-04-30",
+      "actualValue": 99.95,
+      "status": "confirmed",
+      "confirmedAt": "2025-05-05T10:00:00Z",
+      "confirmedBy": "u3"
+    },
+    {
+      "id": "sp2",
+      "tenantId": "t1",
+      "targetId": "st2",
+      "periodStart": "2025-04-01",
+      "periodEnd": "2025-04-07",
+      "actualValue": 180,
+      "status": "pending",
+      "confirmedAt": null,
+      "confirmedBy": null
+    }
+  ]
+}
