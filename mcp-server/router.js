@@ -2,6 +2,7 @@ const { parsePortalIntent } = require('./portal-llm');
 const { runIntent, runConfirmedAction } = require('./actionRunner');
 const users = require('./services/users');
 const { ApiError } = require('./services/tenants');
+const db = require('./db');
 
 const SUPERSET_KEYWORDS = /\b(chart|dashboard|sql|visuali[sz]e|plot|graph|revenue|sales|top\s+\d+)\b/i;
 
@@ -24,6 +25,7 @@ async function handlePortalChat(body) {
     user,
     selectedTenantId: tenantId,
     askedAs,
+    tabData: db.getTabData(activeTab, tenantId),
   });
 
   const result = await runIntent(user, parsed.intent, parsed.params, {

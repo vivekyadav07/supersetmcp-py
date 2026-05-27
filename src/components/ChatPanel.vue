@@ -128,8 +128,10 @@ export default {
     },
   },
   async mounted() {
+    const uid = store.sessionUserId || store.currentUser?.id;
+    if (!uid) return;
     try {
-      const me = await fetchMe(store.currentUser.id);
+      const me = await fetchMe(uid);
       store.setMe(me);
       if (me.tenants?.length && !store.selectedTenantId) {
         store.selectedTenantId = me.tenants[0].id;
@@ -176,7 +178,7 @@ export default {
             query: text,
             activeTab: store.activeTab,
             tenantId: store.selectedTenantId,
-            userId: store.currentUser.id,
+            userId: store.sessionUserId || store.currentUser?.id,
             askedAs: store.askedAs,
           });
           store.addMessage({
@@ -202,7 +204,7 @@ export default {
       try {
         const response = await confirmPortalAction({
           token: action.token,
-          userId: store.currentUser.id,
+          userId: store.sessionUserId || store.currentUser?.id,
         });
         store.addMessage({
           role: 'ai',

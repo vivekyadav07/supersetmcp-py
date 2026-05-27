@@ -16,6 +16,7 @@ const {
 } = require('./superset');
 
 const apiRouter = require('./routes/api');
+const authRouter = require('./routes/auth');
 const {
   shouldUseSuperset,
   handlePortalChat,
@@ -115,6 +116,7 @@ app.post('/chat/confirm', async (req, res) => {
   }
 });
 
+app.use('/api/auth', authRouter);
 app.use('/api', apiRouter);
 
 app.use((err, req, res, _next) => {
@@ -139,6 +141,7 @@ async function start() {
     console.log('   POST /ask     — Superset charts');
     console.log('   POST /chat    — Portal router');
     console.log('   GET  /api/me  — Auth context');
+    console.log('   POST /api/auth/signin | signup/*');
   });
 }
 

@@ -7,6 +7,61 @@ function authHeaders(userId) {
   };
 }
 
+export async function authSignIn({ userId, password }) {
+  const res = await fetch(`${API_BASE}/api/auth/signin`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId, password }),
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || 'Sign in failed');
+  return body.data;
+}
+
+export async function authSignupStart(payload) {
+  const res = await fetch(`${API_BASE}/api/auth/signup/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || 'Signup failed');
+  return body.data;
+}
+
+export async function authSignupVerify({ sessionId, type, code }) {
+  const res = await fetch(`${API_BASE}/api/auth/signup/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, type, code }),
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || 'Verification failed');
+  return body.data;
+}
+
+export async function authSignupResend({ sessionId, type }) {
+  const res = await fetch(`${API_BASE}/api/auth/signup/resend`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, type }),
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || 'Resend failed');
+  return body.data;
+}
+
+export async function authSignupComplete({ sessionId }) {
+  const res = await fetch(`${API_BASE}/api/auth/signup/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId }),
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || 'Could not complete signup');
+  return body.data;
+}
+
 export async function fetchMe(userId) {
   const res = await fetch(`${API_BASE}/api/me?userId=${encodeURIComponent(userId)}`, {
     headers: authHeaders(userId),

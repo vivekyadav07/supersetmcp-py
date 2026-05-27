@@ -18,28 +18,43 @@
   "users": [
     {
       "id": "u1",
+      "userId": "sysadmin",
       "email": "sys@example.com",
+      "mobile": "+10000000001",
       "name": "System Admin",
+      "password": "admin123",
       "role": "system_admin",
       "tenantIds": ["t1", "t2"],
       "status": "active",
+      "emailVerified": true,
+      "mobileVerified": true,
       "askedAsOptions": ["manager", "executive", "employee"]
     },
     {
       "id": "u2",
+      "userId": "jane_admin",
       "email": "admin@acme.com",
+      "mobile": "+10000000002",
       "name": "Jane Tenant Admin",
+      "password": "admin123",
       "role": "tenant_admin",
       "tenantIds": ["t1"],
-      "status": "active"
+      "status": "active",
+      "emailVerified": true,
+      "mobileVerified": true
     },
     {
       "id": "u3",
+      "userId": "bob_ops",
       "email": "ops@acme.com",
+      "mobile": "+10000000003",
       "name": "Bob Operator",
+      "password": "admin123",
       "role": "user",
       "tenantIds": ["t1"],
-      "status": "active"
+      "status": "active",
+      "emailVerified": true,
+      "mobileVerified": true
     },
     {
       "id": "u4",

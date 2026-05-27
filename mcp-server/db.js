@@ -19,6 +19,7 @@ class DB {
     try {
       const content = await fs.readFile(DB_FILE, 'utf-8');
       this.data = JSON.parse(content);
+      await this.ensureAuthFields();
     } catch (err) {
       if (err.code === 'ENOENT') {
         const seed = await fs.readFile(SEED_FILE, 'utf-8');
@@ -66,6 +67,66 @@ class DB {
     const next = updater([...this.get(collection)]);
     await this.set(collection, next);
     return next;
+  }
+
+  async ensureAuthFields() {
+    const seed = JSON.parse(await fs.readFile(SEED_FILE, 'utf-8'));
+    const seedById = Object.fromEntries((seed.users || []).map((u) => [u.id, u]));
+    let changed = false;
+    const users = this.get('users').map((u) => {
+      const s = seedById[u.id];
+      if (!s) return u;
+      const merged = { ...u };
+      ['userId', 'mobile', 'password', 'emailVerified', 'mobileVerified'].forEach((key) => {
+        if (merged[key] === undefined && s[key] !== undefined) {
+          merged[key] = s[key];
+          changed = true;
+        }
+      });
+      return merged;
+    });
+    if (changed) {
+      this.data.users = users;
+      await this.write();
+    }
+  }
+
+  getTabData(activeTab, tenantId) {
+    switch (activeTab) {
+      case 'users':
+        return {
+          users: this.get('users').filter(
+            (u) => !tenantId || (u.tenantIds || []).includes(tenantId)
+          ),
+          tenant: tenantId ? this.findById('tenants', tenantId) : null,
+        };
+      case 'tenants':
+        return {
+          tenants: this.get('tenants'),
+        };
+      case 'sla_targets':
+        return {
+          sla_categories: this.get('sla_categories').filter(
+            (c) => !tenantId || c.tenantId === tenantId
+          ),
+          sla_targets: this.get('sla_targets').filter(
+            (t) => !tenantId || t.tenantId === tenantId
+          ),
+          tenant: tenantId ? this.findById('tenants', tenantId) : null,
+        };
+      case 'sla_performance':
+        return {
+          sla_targets: this.get('sla_targets').filter(
+            (t) => !tenantId || t.tenantId === tenantId
+          ),
+          sla_performance: this.get('sla_performance').filter(
+            (p) => !tenantId || p.tenantId === tenantId
+          ),
+          tenant: tenantId ? this.findById('tenants', tenantId) : null,
+        };
+      default:
+        return {};
+    }
   }
 }
 

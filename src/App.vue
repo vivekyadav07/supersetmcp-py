@@ -1,7 +1,20 @@
 <template>
-  <div class="flex h-screen w-full overflow-hidden font-sans bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 transition-colors duration-200">
+  <div
+    v-if="!ready"
+    class="min-h-screen flex items-center justify-center text-gray-500"
+  >
+    Loading…
+  </div>
 
-    <!-- Mobile: toggle chat drawer only on Dashboards (split layout) -->
+  <AuthScreen
+    v-else-if="!store.isAuthenticated"
+    @authenticated="onAuthenticated"
+  />
+
+  <div
+    v-else
+    class="flex h-screen w-full overflow-hidden font-sans bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 transition-colors duration-200"
+  >
     <button
       v-if="isDashboardLayout"
       @click="isSidebarOpen = !isSidebarOpen"
@@ -15,42 +28,42 @@
       </svg>
     </button>
 
-    <!-- Sidebar / Chat Panel -->
     <div :class="chatWrapperClass">
       <ChatPanel />
     </div>
 
-    <!-- Chart area — Dashboards tab only -->
     <div
       v-if="isDashboardLayout"
       class="flex-1 min-w-0 h-full overflow-hidden relative"
     >
       <Dashboard />
-
-      <!-- Overlay for mobile when sidebar is open -->
       <div
         v-if="isSidebarOpen"
         @click="isSidebarOpen = false"
         class="absolute inset-0 bg-black/50 z-30 md:hidden"
-      ></div>
+      />
     </div>
   </div>
 </template>
 
 <script>
 import { store } from './store.js';
+import { fetchMe } from './services/api.js';
+import AuthScreen from './components/AuthScreen.vue';
 import ChatPanel from './components/ChatPanel.vue';
 import Dashboard from './components/Dashboard.vue';
 
 export default {
   name: 'App',
   components: {
+    AuthScreen,
     ChatPanel,
-    Dashboard
+    Dashboard,
   },
   data() {
     return {
-      isSidebarOpen: false
+      ready: false,
+      isSidebarOpen: false,
     };
   },
   computed: {
@@ -77,12 +90,27 @@ export default {
       }
     },
   },
-  mounted() {
-    // Check system preference on load
-    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-      this.store.isDarkMode = true;
+  async mounted() {
+    if (window.matchMedia?.('(prefers-color-scheme: dark)').matches) {
+      store.isDarkMode = true;
       document.documentElement.classList.add('dark');
     }
-  }
-}
+    await this.restoreSession();
+    this.ready = true;
+  },
+  methods: {
+    async restoreSession() {
+      if (!store.sessionUserId) return;
+      try {
+        const me = await fetchMe(store.sessionUserId);
+        store.setMe(me);
+      } catch {
+        store.logout();
+      }
+    },
+    onAuthenticated() {
+      this.ready = true;
+    },
+  },
+};
 </script>

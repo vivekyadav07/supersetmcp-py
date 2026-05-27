@@ -40,6 +40,26 @@ function cleanJSON(text) {
   return text.replace(/```json/g, '').replace(/```/g, '').trim();
 }
 
+function tabDataSummary(activeTab, tabData) {
+  if (!tabData || typeof tabData !== 'object') return 'No tab data available.';
+  const parts = [];
+  if (activeTab === 'users') {
+    parts.push(`users_count=${(tabData.users || []).length}`);
+    if (tabData.tenant) parts.push(`tenant=${tabData.tenant.name}(${tabData.tenant.id})`);
+  } else if (activeTab === 'tenants') {
+    parts.push(`tenants_count=${(tabData.tenants || []).length}`);
+  } else if (activeTab === 'sla_targets') {
+    parts.push(`categories_count=${(tabData.sla_categories || []).length}`);
+    parts.push(`targets_count=${(tabData.sla_targets || []).length}`);
+    if (tabData.tenant) parts.push(`tenant=${tabData.tenant.name}(${tabData.tenant.id})`);
+  } else if (activeTab === 'sla_performance') {
+    parts.push(`targets_count=${(tabData.sla_targets || []).length}`);
+    parts.push(`performance_count=${(tabData.sla_performance || []).length}`);
+    if (tabData.tenant) parts.push(`tenant=${tabData.tenant.name}(${tabData.tenant.id})`);
+  }
+  return parts.join(', ') || 'No tab data available.';
+}
+
 function tryRegex(query, activeTab, tenantId) {
   const q = query.toLowerCase().trim();
 
@@ -98,7 +118,7 @@ function tryRegex(query, activeTab, tenantId) {
   return null;
 }
 
-async function parsePortalIntent({ query, activeTab, user, selectedTenantId, askedAs }) {
+async function parsePortalIntent({ query, activeTab, user, selectedTenantId, askedAs, tabData }) {
   const tenantId = selectedTenantId;
   const regexResult = tryRegex(query, activeTab, tenantId);
   if (regexResult) return regexResult;
@@ -126,6 +146,8 @@ Rules:
 - For delete_tenant, delete_user, delete_sla_target, delete_sla_performance set needsConfirmation true.
 - Map tenant names/codes to tenantId when possible (${tenantId} is default).
 - invite_user needs email and optional role.
+- Use tab data summary to resolve entity IDs:
+${tabDataSummary(activeTab, tabData)}
 
 User message:
 ${query}`;

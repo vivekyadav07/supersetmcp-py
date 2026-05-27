@@ -1,28 +1,36 @@
 import { reactive } from 'vue';
 
 const TAB_KEYS = ['dashboards', 'users', 'sla_targets', 'sla_performance', 'tenants'];
+const SESSION_KEY = 'portal_session_user_id';
 
 function emptyTabMessages() {
   return Object.fromEntries(TAB_KEYS.map((k) => [k, []]));
 }
 
+function loadSessionUserId() {
+  try {
+    return localStorage.getItem(SESSION_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
 export const store = reactive({
   activeTab: 'dashboards',
-  selectedTenantId: 't1',
+  selectedTenantId: null,
   askedAs: 'manager',
-  currentUser: {
-    id: 'u2',
-    email: 'admin@acme.com',
-    name: 'Jane Tenant Admin',
-    role: 'tenant_admin',
-    tenantIds: ['t1'],
-  },
+  sessionUserId: loadSessionUserId(),
+  currentUser: null,
   tenants: [],
   tabMessages: emptyTabMessages(),
   charts: [],
   currentSql: '',
   isDarkMode: false,
   isQueryVisible: false,
+
+  get isAuthenticated() {
+    return Boolean(this.sessionUserId && this.currentUser);
+  },
 
   get messages() {
     return this.tabMessages[this.activeTab] || [];
@@ -52,6 +60,28 @@ export const store = reactive({
       if (!this.selectedTenantId && tenants.length) {
         this.selectedTenantId = tenants[0].id;
       }
+    }
+  },
+
+  login(user) {
+    this.sessionUserId = user.id;
+    this.currentUser = user;
+    try {
+      localStorage.setItem(SESSION_KEY, user.id);
+    } catch {
+      /* ignore */
+    }
+  },
+
+  logout() {
+    this.sessionUserId = null;
+    this.currentUser = null;
+    this.tenants = [];
+    this.selectedTenantId = null;
+    try {
+      localStorage.removeItem(SESSION_KEY);
+    } catch {
+      /* ignore */
     }
   },
 
