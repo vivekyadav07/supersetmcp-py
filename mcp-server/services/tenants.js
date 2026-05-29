@@ -1,5 +1,9 @@
-const db = require('../db');
+const { pool } = require('../db');
 const { can } = require('../rbac');
+const { customAlphabet } = require('nanoid');
+
+// A more robust way to generate short, unique, URL-friendly IDs
+const generateTenantId = customAlphabet('abcdefghijklmnopqrstuvwxyz0123456789', 10);
 
 class ApiError extends Error {
   constructor(status, message) {
@@ -16,65 +20,114 @@ function assertCan(user, action, tenantId) {
 
 async function listTenants(user) {
   assertCan(user, 'list_tenants');
-  let tenants = db.get('tenants');
-  if (user.role !== 'system_admin') {
-    tenants = tenants.filter((t) => user.tenantIds.includes(t.id));
+
+  if (user.role === 'system_admin') {
+    const [rows] = await pool.query('SELECT * FROM tenants ORDER BY createdAt DESC');
+    return rows;
   }
-  return tenants;
+
+  // For non-admins, get tenants they are explicitly linked to
+  const sql = `
+    SELECT t.* 
+    FROM tenants t
+    JOIN user_tenants ut ON t.id = ut.tenantId
+    WHERE ut.userId = ?
+    ORDER BY t.createdAt DESC
+  `;
+  const [rows] = await pool.query(sql, [user.id]);
+  return rows;
 }
 
 async function getTenant(user, id) {
-  const tenant = db.findById('tenants', id);
-  if (!tenant) throw new ApiError(404, 'Tenant not found');
-  assertCan(user, 'get_tenant', id);
+  const [rows] = await pool.query('SELECT * FROM tenants WHERE id = ?', [id]);
+  const tenant = rows[0];
+
+  if (!tenant) {
+    throw new ApiError(404, 'Tenant not found');
+  }
+
+  assertCan(user, 'get_tenant', tenant.id);
   return tenant;
 }
 
 async function getTenantByCode(user, code) {
-  const tenant = db.get('tenants').find((t) => t.code.toUpperCase() === code.toUpperCase());
-  if (!tenant) throw new ApiError(404, 'Tenant not found');
+  const [rows] = await pool.query('SELECT * FROM tenants WHERE code = ?', [code.toUpperCase()]);
+  const tenant = rows[0];
+
+  if (!tenant) {
+    throw new ApiError(404, 'Tenant not found');
+  }
+
   assertCan(user, 'get_tenant', tenant.id);
   return tenant;
 }
 
 async function createTenant(user, body) {
   assertCan(user, 'create_tenant');
-  const existing = db.get('tenants').find(
-    (t) => t.code.toUpperCase() === (body.code || '').toUpperCase()
-  );
-  if (existing) throw new ApiError(409, 'Tenant code already exists');
 
-  const tenant = {
-    id: db.generateId('t'),
-    name: body.name,
-    code: (body.code || body.name).toUpperCase().replace(/\s+/g, '_').slice(0, 20),
-    status: body.status || 'active',
-    createdAt: new Date().toISOString(),
+  const { name, code, status = 'active' } = body;
+  const upperCode = (code || name).toUpperCase().replace(/\s+/g, '_').slice(0, 20);
+
+  // Check for duplicates
+  const [existing] = await pool.query('SELECT id FROM tenants WHERE code = ?', [upperCode]);
+  if (existing.length > 0) {
+    throw new ApiError(409, 'Tenant code already exists');
+  }
+
+  const newTenant = {
+    id: generateTenantId(),
+    name,
+    code: upperCode,
+    status,
   };
 
-  await db.updateCollection('tenants', (items) => [...items, tenant]);
-  return tenant;
+  const sql = 'INSERT INTO tenants (id, name, code, status) VALUES (?, ?, ?, ?)';
+  await pool.query(sql, [newTenant.id, newTenant.name, newTenant.code, newTenant.status]);
+
+  return newTenant;
 }
 
 async function updateTenant(user, id, body) {
   assertCan(user, 'update_tenant', id);
-  let updated = null;
-  await db.updateCollection('tenants', (items) =>
-    items.map((t) => {
-      if (t.id !== id) return t;
-      updated = { ...t, ...body, id: t.id };
-      return updated;
-    })
-  );
-  if (!updated) throw new ApiError(404, 'Tenant not found');
-  return updated;
+
+  // First, ensure the tenant exists
+  const [rows] = await pool.query('SELECT * FROM tenants WHERE id = ?', [id]);
+  const originalTenant = rows[0];
+  if (!originalTenant) {
+    throw new ApiError(404, 'Tenant not found');
+  }
+
+  // Build the update query dynamically to only change fields that are provided
+  const fieldsToUpdate = {};
+  if (body.name) fieldsToUpdate.name = body.name;
+  if (body.code) fieldsToUpdate.code = body.code.toUpperCase();
+  if (body.status) fieldsToUpdate.status = body.status;
+
+  if (Object.keys(fieldsToUpdate).length === 0) {
+    return originalTenant; // Nothing to update
+  }
+
+  const sql = 'UPDATE tenants SET ? WHERE id = ?';
+  await pool.query(sql, [fieldsToUpdate, id]);
+
+  return { ...originalTenant, ...fieldsToUpdate };
 }
 
 async function deleteTenant(user, id) {
   assertCan(user, 'delete_tenant', id);
-  const tenant = db.findById('tenants', id);
-  if (!tenant) throw new ApiError(404, 'Tenant not found');
-  await db.updateCollection('tenants', (items) => items.filter((t) => t.id !== id));
+
+  // Ensure the tenant exists before trying to delete
+  const [rows] = await pool.query('SELECT * FROM tenants WHERE id = ?', [id]);
+  const tenant = rows[0];
+  if (!tenant) {
+    throw new ApiError(404, 'Tenant not found');
+  }
+
+  // The database is set up with ON DELETE CASCADE,
+  // so deleting a tenant will automatically delete related
+  // user_tenants, sla_targets, and sla_performance records.
+  await pool.query('DELETE FROM tenants WHERE id = ?', [id]);
+
   return tenant;
 }
 

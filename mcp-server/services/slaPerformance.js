@@ -1,6 +1,9 @@
-const db = require('../db');
+const { pool } = require('../db');
 const { can } = require('../rbac');
 const { ApiError } = require('./tenants');
+const { customAlphabet } = require('nanoid');
+
+const generatePerfId = customAlphabet('abcdefghijklmnopqrstuvwxyz0123456789', 12);
 
 function assertCan(user, action, tenantId) {
   if (!can(user, action, { tenantId })) {
@@ -8,97 +11,113 @@ function assertCan(user, action, tenantId) {
   }
 }
 
-async function listPerformance(user, tenantId) {
-  assertCan(user, 'list_sla_performance', tenantId);
-  return db.findByTenant('sla_performance', tenantId);
-}
-
-async function getPerformance(user, tenantId, id) {
-  assertCan(user, 'get_sla_performance', tenantId);
-  const perf = db.findById('sla_performance', id);
-  if (!perf || perf.tenantId !== tenantId) throw new ApiError(404, 'Performance record not found');
-  return perf;
-}
-
-async function listPending(user, tenantId) {
-  assertCan(user, 'list_pending_sla_performance', tenantId);
-  return db.findByTenant('sla_performance', tenantId).filter((p) => p.status === 'pending');
-}
-
-async function getStatusByTarget(user, tenantId, targetId) {
-  assertCan(user, 'get_sla_performance_status', tenantId);
-  const records = db
-    .findByTenant('sla_performance', tenantId)
-    .filter((p) => p.targetId === targetId);
-  return { targetId, records, pending: records.filter((r) => r.status === 'pending').length };
-}
-
-async function createPerformance(user, tenantId, body) {
+async function createPerformance(user, tenantId, targetId, body) {
   assertCan(user, 'create_sla_performance', tenantId);
-  const perf = {
-    id: db.generateId('sp'),
+
+  // Validate that the target exists
+  const [target] = await pool.query('SELECT id FROM sla_targets WHERE id = ? AND tenantId = ?', [targetId, tenantId]);
+  if (target.length === 0) {
+    throw new ApiError(404, 'SLA Target not found');
+  }
+
+  const { actualValue, notes } = body;
+  const newPerf = {
+    id: generatePerfId(),
     tenantId,
-    targetId: body.targetId,
-    periodStart: body.periodStart,
-    periodEnd: body.periodEnd,
-    actualValue: body.actualValue,
-    status: body.status || 'pending',
-    confirmedAt: null,
-    confirmedBy: null,
+    targetId,
+    actualValue,
+    notes,
+    status: 'Pending',
+    createdBy: user.id,
   };
-  await db.updateCollection('sla_performance', (items) => [...items, perf]);
-  return perf;
+
+  await pool.query('INSERT INTO sla_performance SET ?', newPerf);
+  return newPerf;
 }
 
-async function updatePerformance(user, tenantId, id, body) {
-  assertCan(user, 'update_sla_performance', tenantId);
-  let updated = null;
-  await db.updateCollection('sla_performance', (items) =>
-    items.map((p) => {
-      if (p.id !== id || p.tenantId !== tenantId) return p;
-      updated = { ...p, ...body, id: p.id, tenantId };
-      return updated;
-    })
+async function updatePerformance(user, tenantId, perfId, body) {
+    assertCan(user, 'update_sla_performance', tenantId);
+
+    const [original] = await pool.query('SELECT * FROM sla_performance WHERE id = ? AND tenantId = ?', [perfId, tenantId]);
+    if (original.length === 0) {
+        throw new ApiError(404, 'Performance record not found');
+    }
+
+    const fieldsToUpdate = {};
+    if (body.actualValue !== undefined) fieldsToUpdate.actualValue = body.actualValue;
+    if (body.notes !== undefined) fieldsToUpdate.notes = body.notes;
+    // Don't allow status update here, use confirmPerformance for that
+
+    if (Object.keys(fieldsToUpdate).length === 0) return original[0];
+
+    await pool.query('UPDATE sla_performance SET ? WHERE id = ?', [fieldsToUpdate, perfId]);
+    return { ...original[0], ...fieldsToUpdate };
+}
+
+async function deletePerformance(user, tenantId, perfId) {
+    assertCan(user, 'delete_sla_performance', tenantId);
+
+    const [perf] = await pool.query('SELECT * FROM sla_performance WHERE id = ? AND tenantId = ?', [perfId, tenantId]);
+    if (perf.length === 0) {
+        throw new ApiError(404, 'Performance record not found');
+    }
+
+    await pool.query('DELETE FROM sla_performance WHERE id = ?', [perfId]);
+    return perf[0];
+}
+
+async function listPerformance(user, tenantId, targetId = null) {
+  assertCan(user, 'list_sla_performance', tenantId);
+
+  let sql = 'SELECT * FROM sla_performance WHERE tenantId = ?';
+  const params = [tenantId];
+
+  if (targetId) {
+    sql += ' AND targetId = ?';
+    params.push(targetId);
+  }
+
+  sql += ' ORDER BY date DESC';
+
+  const [rows] = await pool.query(sql, params);
+  return rows;
+}
+
+async function getPendingPerformance(user, tenantId) {
+  assertCan(user, 'list_pending_sla_performance', tenantId);
+  const [rows] = await pool.query(
+      'SELECT * FROM sla_performance WHERE tenantId = ? AND status = "Pending" ORDER BY date ASC',
+      [tenantId]
   );
-  if (!updated) throw new ApiError(404, 'Performance record not found');
-  return updated;
+  return rows;
 }
 
-async function deletePerformance(user, tenantId, id) {
-  assertCan(user, 'delete_sla_performance', tenantId);
-  const perf = db.findById('sla_performance', id);
-  if (!perf || perf.tenantId !== tenantId) throw new ApiError(404, 'Performance record not found');
-  await db.updateCollection('sla_performance', (items) => items.filter((p) => p.id !== id));
-  return perf;
-}
-
-async function confirmPerformance(user, tenantId, id, confirmedBy) {
+async function confirmPerformance(user, tenantId, perfId) {
   assertCan(user, 'confirm_sla_performance', tenantId);
-  let updated = null;
-  await db.updateCollection('sla_performance', (items) =>
-    items.map((p) => {
-      if (p.id !== id || p.tenantId !== tenantId) return p;
-      if (p.status !== 'pending') throw new ApiError(400, 'Performance is not pending');
-      updated = {
-        ...p,
-        status: 'confirmed',
-        confirmedAt: new Date().toISOString(),
-        confirmedBy,
-      };
-      return updated;
-    })
-  );
-  if (!updated) throw new ApiError(404, 'Performance record not found');
-  return updated;
+
+  const [original] = await pool.query('SELECT * FROM sla_performance WHERE id = ? AND tenantId = ?', [perfId, tenantId]);
+  if (original.length === 0) {
+    throw new ApiError(404, 'Performance record not found');
+  }
+
+  if (original[0].status === 'Confirmed') {
+      return original[0]; // Already confirmed
+  }
+
+  const updates = {
+      status: 'Confirmed',
+      confirmedBy: user.id
+  };
+
+  await pool.query('UPDATE sla_performance SET ? WHERE id = ?', [updates, perfId]);
+  return { ...original[0], ...updates };
 }
 
 module.exports = {
-  listPerformance,
-  getPerformance,
-  listPending,
-  getStatusByTarget,
   createPerformance,
   updatePerformance,
   deletePerformance,
+  listPerformance,
+  getPendingPerformance,
   confirmPerformance,
 };

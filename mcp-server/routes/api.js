@@ -11,25 +11,31 @@ function envelope(data, meta = {}) {
   return { ok: true, data, meta };
 }
 
-function getUser(req) {
-  const userId = req.headers['x-user-id'] || req.query.userId;
-  if (!userId) return null;
-  return users.getUserById(userId);
-}
+// This middleware must be async to correctly handle the database query
+async function requireUser(req, res, next) {
+  try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    if (!userId) {
+      return res.status(401).json({ ok: false, error: 'Missing user ID' });
+    }
 
-function requireUser(req, res, next) {
-  const user = getUser(req);
-  if (!user) {
-    return res.status(401).json({ ok: false, error: 'Missing or invalid user' });
+    const user = await users.getUserById(userId);
+    if (!user) {
+      return res.status(401).json({ ok: false, error: 'Invalid user' });
+    }
+    
+    req.user = user;
+    next();
+  } catch (err) {
+    next(err);
   }
-  req.user = user;
-  next();
 }
 
 router.use(requireUser);
 
 router.get('/me', async (req, res, next) => {
   try {
+    // The user object from requireUser already has tenantIds, but we can fetch full tenant objects if needed
     const tenantList = await tenants.listTenants(req.user);
     res.json(
       envelope({
@@ -142,7 +148,7 @@ router.delete('/tenants/:tenantId/users/:id', async (req, res, next) => {
 // SLA targets
 router.get('/tenants/:tenantId/sla-categories', async (req, res, next) => {
   try {
-    const data = await slaTargets.listCategories(req.user, req.params.tenantId);
+    const data = await slaTargets.listSlaCategories(req.user, req.params.tenantId);
     res.json(envelope(data, { total: data.length }));
   } catch (err) {
     next(err);
@@ -151,17 +157,8 @@ router.get('/tenants/:tenantId/sla-categories', async (req, res, next) => {
 
 router.get('/tenants/:tenantId/sla-targets', async (req, res, next) => {
   try {
-    const data = await slaTargets.listTargets(req.user, req.params.tenantId);
+    const data = await slaTargets.listSlaTargets(req.user, req.params.tenantId);
     res.json(envelope(data, { total: data.length }));
-  } catch (err) {
-    next(err);
-  }
-});
-
-router.post('/tenants/:tenantId/sla-targets/check-duplicate', async (req, res, next) => {
-  try {
-    const data = await slaTargets.checkDuplicate(req.user, req.params.tenantId, req.body);
-    res.json(envelope(data));
   } catch (err) {
     next(err);
   }
@@ -169,7 +166,7 @@ router.post('/tenants/:tenantId/sla-targets/check-duplicate', async (req, res, n
 
 router.post('/tenants/:tenantId/sla-targets', async (req, res, next) => {
   try {
-    const data = await slaTargets.createTarget(req.user, req.params.tenantId, req.body);
+    const data = await slaTargets.createSlaTarget(req.user, req.params.tenantId, req.body);
     res.status(201).json(envelope(data));
   } catch (err) {
     next(err);
@@ -178,7 +175,7 @@ router.post('/tenants/:tenantId/sla-targets', async (req, res, next) => {
 
 router.patch('/tenants/:tenantId/sla-targets/:id', async (req, res, next) => {
   try {
-    const data = await slaTargets.updateTarget(
+    const data = await slaTargets.updateSlaTarget(
       req.user,
       req.params.tenantId,
       req.params.id,
@@ -192,7 +189,7 @@ router.patch('/tenants/:tenantId/sla-targets/:id', async (req, res, next) => {
 
 router.delete('/tenants/:tenantId/sla-targets/:id', async (req, res, next) => {
   try {
-    const data = await slaTargets.deleteTarget(
+    const data = await slaTargets.deleteSlaTarget(
       req.user,
       req.params.tenantId,
       req.params.id
@@ -215,34 +212,8 @@ router.get('/tenants/:tenantId/sla-performance', async (req, res, next) => {
 
 router.get('/tenants/:tenantId/sla-performance/pending', async (req, res, next) => {
   try {
-    const data = await slaPerformance.listPending(req.user, req.params.tenantId);
+    const data = await slaPerformance.getPendingPerformance(req.user, req.params.tenantId);
     res.json(envelope(data, { total: data.length }));
-  } catch (err) {
-    next(err);
-  }
-});
-
-router.get('/tenants/:tenantId/sla-performance/status', async (req, res, next) => {
-  try {
-    const data = await slaPerformance.getStatusByTarget(
-      req.user,
-      req.params.tenantId,
-      req.query.targetId
-    );
-    res.json(envelope(data));
-  } catch (err) {
-    next(err);
-  }
-});
-
-router.get('/tenants/:tenantId/sla-performance/:id', async (req, res, next) => {
-  try {
-    const data = await slaPerformance.getPerformance(
-      req.user,
-      req.params.tenantId,
-      req.params.id
-    );
-    res.json(envelope(data));
   } catch (err) {
     next(err);
   }
@@ -253,6 +224,7 @@ router.post('/tenants/:tenantId/sla-performance', async (req, res, next) => {
     const data = await slaPerformance.createPerformance(
       req.user,
       req.params.tenantId,
+      req.body.targetId, // Assuming targetId is in the body
       req.body
     );
     res.status(201).json(envelope(data));
@@ -293,8 +265,7 @@ router.post('/tenants/:tenantId/sla-performance/:id/confirm', async (req, res, n
     const data = await slaPerformance.confirmPerformance(
       req.user,
       req.params.tenantId,
-      req.params.id,
-      req.user.id
+      req.params.id
     );
     res.json(envelope(data));
   } catch (err) {

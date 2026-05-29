@@ -3,7 +3,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 
-const db = require('./db');
+const { checkConnection } = require('./db');
 const { generateAIConfig } = require('./llm');
 const {
   runSQL,
@@ -134,7 +134,8 @@ app.use((err, req, res, _next) => {
 });
 
 async function start() {
-  await db.init();
+  // Check the database connection before starting the server
+  await checkConnection();
 
   app.listen(3000, () => {
     console.log('🚀 MCP Server running on port 3000');

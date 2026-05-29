@@ -1,174 +1,150 @@
-const db = require('../db');
+const { pool } = require('../db');
 const { ApiError } = require('./tenants');
+const { customAlphabet } = require('nanoid');
+const bcrypt = require('bcryptjs');
 
-const pendingSignups = new Map();
-const verificationCodes = new Map();
+const generateUserId = customAlphabet('abcdefghijklmnopqrstuvwxyz0123456789', 10);
+const generateTenantId = customAlphabet('abcdefghijklmnopqrstuvwxyz0123456789', 10);
 
-function generateCode() {
-  return String(Math.floor(100000 + Math.random() * 900000));
+// --- Helper Functions ---
+
+async function hashPassword(password) {
+  const salt = await bcrypt.genSalt(10);
+  return bcrypt.hash(password, salt);
+}
+
+async function comparePassword(plain, hash) {
+  // Handles the case where the hash might be null or undefined
+  if (!hash) return false;
+  return bcrypt.compare(plain, hash);
 }
 
 function sanitizeUser(user) {
   if (!user) return null;
-  const { password, ...safe } = user;
-  return safe;
+  const { password, ...safeUser } = user;
+  return safeUser;
 }
 
-function findByLoginId(loginId) {
+// --- Main Authentication Logic ---
+
+async function findByLoginId(loginId) {
   const key = (loginId || '').trim().toLowerCase();
-  return (
-    db.get('users').find(
-      (u) =>
-        u.id.toLowerCase() === key ||
-        (u.userId && u.userId.toLowerCase() === key) ||
-        (u.email && u.email.toLowerCase() === key)
-    ) || null
-  );
+  const sql = 'SELECT * FROM users WHERE LOWER(id) = ? OR LOWER(email) = ?';
+  const [rows] = await pool.query(sql, [key, key]);
+  return rows[0] || null;
 }
 
 async function signIn({ userId, password }) {
-  const user = findByLoginId(userId);
-  if (!user || user.password !== password) {
-    throw new ApiError(401, 'Invalid user ID or password');
+  const user = await findByLoginId(userId);
+
+  if (!user) {
+    throw new ApiError(401, 'Invalid credentials');
   }
-  if (user.status === 'pending_verification') {
-    throw new ApiError(403, 'Please complete email and mobile verification');
+
+  const isMatch = await comparePassword(password, user.password);
+
+  if (!isMatch) {
+    // --- TEMPORARY MIGRATION LOGIC ---
+    // This block checks if the stored password is the old, un-encrypted one.
+    // This is a temporary measure to upgrade passwords securely.
+    if (user.password === password) {
+      console.log(`Upgrading password for user: ${user.id}`);
+      const newHashedPassword = await hashPassword(password);
+      await pool.query('UPDATE users SET password = ? WHERE id = ?', [newHashedPassword, user.id]);
+      // The login can now proceed.
+    } else {
+      // If it's not a match and not a legacy password, then it's truly invalid.
+      throw new ApiError(401, 'Invalid credentials');
+    }
   }
-  if (user.status !== 'active' && user.status !== 'invited') {
-    throw new ApiError(403, 'Account is not active');
+
+  if (user.status !== 'active') {
+    throw new ApiError(403, `Account is not active. Current status: ${user.status}`);
   }
+
+  // Attach the user's tenant IDs
+  const [tenantRows] = await pool.query('SELECT tenantId FROM user_tenants WHERE userId = ?', [user.id]);
+  user.tenantIds = tenantRows.map(row => row.tenantId);
+
   return sanitizeUser(user);
 }
 
-function startSignup(body) {
-  const userId = (body.userId || '').trim();
-  const email = (body.email || '').trim().toLowerCase();
-  const mobile = (body.mobile || '').trim();
-  const tenantCode = (body.tenantCode || '').trim().toUpperCase();
-  const name = (body.name || '').trim();
-  const password = body.password || '';
+async function signUp(body) {
+  const { email, name, password, tenantCode } = body;
 
-  if (!userId || !email || !mobile || !tenantCode || !name || !password) {
-    throw new ApiError(400, 'All fields are required');
+  if (!email || !name || !password || !tenantCode) {
+    throw new ApiError(400, 'Email, name, password, and tenantCode are required.');
   }
 
-  const tenant = db.get('tenants').find((t) => t.code.toUpperCase() === tenantCode);
-  if (!tenant) throw new ApiError(404, 'Tenant code not found');
+  const upperCode = tenantCode.toUpperCase().trim();
+  let tenantId;
+  let isNewTenant = false;
 
-  if (db.get('users').some((u) => u.userId && u.userId.toLowerCase() === userId.toLowerCase())) {
-    throw new ApiError(409, 'User ID already exists');
-  }
-  if (db.get('users').some((u) => u.email === email)) {
-    throw new ApiError(409, 'Email already registered');
-  }
-
-  const sessionId = `signup_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  const emailCode = generateCode();
-  const mobileCode = generateCode();
-
-  pendingSignups.set(sessionId, {
-    sessionId,
-    userId,
-    name,
-    email,
-    mobile,
-    tenantCode,
-    tenantId: tenant.id,
-    password,
-    emailCode,
-    mobileCode,
-    emailVerified: false,
-    mobileVerified: false,
-    createdAt: Date.now(),
-  });
-
-  verificationCodes.set(`email:${email}`, emailCode);
-  verificationCodes.set(`mobile:${mobile}`, mobileCode);
-
-  return {
-    sessionId,
-    message: 'Verification codes sent (demo mode)',
-    demoCodes: { email: emailCode, mobile: mobileCode },
-  };
-}
-
-function verifySignupStep(sessionId, type, code) {
-  const pending = pendingSignups.get(sessionId);
-  if (!pending) throw new ApiError(400, 'Signup session expired. Please start again.');
-
-  if (type === 'email') {
-    if (pending.emailCode !== code) throw new ApiError(400, 'Invalid email verification code');
-    pending.emailVerified = true;
-  } else if (type === 'mobile') {
-    if (pending.mobileCode !== code) throw new ApiError(400, 'Invalid mobile verification code');
-    pending.mobileVerified = true;
+  // 1. Get or Create Tenant
+  const [tenants] = await pool.query('SELECT id FROM tenants WHERE code = ?', [upperCode]);
+  
+  if (tenants.length === 0) {
+      tenantId = generateTenantId();
+      isNewTenant = true;
+      console.log(`Auto-creating new tenant with code: ${upperCode}`);
   } else {
-    throw new ApiError(400, 'Invalid verification type');
+      tenantId = tenants[0].id;
   }
 
-  pendingSignups.set(sessionId, pending);
-  return {
-    sessionId,
-    emailVerified: pending.emailVerified,
-    mobileVerified: pending.mobileVerified,
-    ready: pending.emailVerified && pending.mobileVerified,
-  };
-}
-
-async function completeSignup(sessionId) {
-  const pending = pendingSignups.get(sessionId);
-  if (!pending) throw new ApiError(400, 'Signup session expired. Please start again.');
-  if (!pending.emailVerified || !pending.mobileVerified) {
-    throw new ApiError(400, 'Verify email and mobile before completing signup');
+  // 2. Check for existing user
+  const [users] = await pool.query('SELECT id FROM users WHERE email = ?', [email.toLowerCase()]);
+  if (users.length > 0) {
+    throw new ApiError(409, 'A user with this email already exists.');
   }
+
+  // 3. Hash password and create user object
+  const hashedPassword = await hashPassword(password);
+  const assignedRole = isNewTenant ? 'system_admin' : 'user';
 
   const newUser = {
-    id: db.generateId('u'),
-    userId: pending.userId,
-    name: pending.name,
-    email: pending.email,
-    mobile: pending.mobile,
-    password: pending.password,
-    role: 'user',
-    tenantIds: [pending.tenantId],
+    id: generateUserId(),
+    email: email.toLowerCase(),
+    name,
+    password: hashedPassword,
+    role: assignedRole, 
     status: 'active',
-    emailVerified: true,
-    mobileVerified: true,
-    createdAt: new Date().toISOString(),
   };
 
-  await db.updateCollection('users', (items) => [...items, newUser]);
-  pendingSignups.delete(sessionId);
+  // 4. Use a transaction
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    
+    if (isNewTenant) {
+         const newTenant = {
+            id: tenantId,
+            name: `${upperCode} Tenant`,
+            code: upperCode,
+            status: 'active'
+        };
+        await connection.query('INSERT INTO tenants SET ?', newTenant);
+    }
 
+    await connection.query('INSERT INTO users SET ?', newUser);
+    await connection.query('INSERT INTO user_tenants (userId, tenantId) VALUES (?, ?)', [newUser.id, tenantId]);
+    
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    console.error('SIGNUP TRANSACTION FAILED:', error);
+    throw new ApiError(500, 'Could not complete signup.');
+  } finally {
+    connection.release();
+  }
+
+  newUser.tenantIds = [tenantId];
   return sanitizeUser(newUser);
 }
 
-function resendVerification(sessionId, type) {
-  const pending = pendingSignups.get(sessionId);
-  if (!pending) throw new ApiError(400, 'Signup session expired');
-
-  const code = generateCode();
-  if (type === 'email') {
-    pending.emailCode = code;
-    verificationCodes.set(`email:${pending.email}`, code);
-  } else {
-    pending.mobileCode = code;
-    verificationCodes.set(`mobile:${pending.mobile}`, code);
-  }
-  pendingSignups.set(sessionId, pending);
-
-  return {
-    message: `New ${type} code sent (demo mode)`,
-    demoCode: code,
-  };
-}
 
 module.exports = {
   signIn,
-  startSignup,
-  verifySignupStep,
-  completeSignup,
-  resendVerification,
+  signUp,
   sanitizeUser,
   findByLoginId,
 };
